@@ -65,6 +65,7 @@ init([Device, FD0, FD1u, Opts]) ->
     lager:debug("Device configured: ~p has Idx ~p~n", [Device, GtpIfIdx]),
 
     {ok, GtpGenlFam} = get_family("gtp"),
+    lager:debug("Device family: ~p~n", [GtpGenlFam]),
     {ok, GtpNl} = gen_socket:socket(netlink, raw, ?NETLINK_GENERIC),
     ok = gen_socket:bind(GtpNl, netlink:sockaddr_nl(netlink, 0, 0)),
     {ok, #state{ns = NsFd, gtp_nl = GtpNl, rt_nl = RtNl, rt_nl_ns = RtNlNs, gtp_genl_family = GtpGenlFam, gtp_ifidx = GtpIfIdx}}.
@@ -243,6 +244,7 @@ netlink_sockets(Opts) ->
 
 get_family(Family) ->
     {ok, S} = gen_socket:socket(netlink, raw, ?NETLINK_GENERIC),
+    lager:error("get_family() socket created ~p", [S]),
 
     Get = {getfamily, 1, 0, [{family_id, generic}, {family_name, Family}]},
     Seq = erlang:unique_integer([positive]),
@@ -379,10 +381,13 @@ nl_simple_response(Seq, [Other | Next]) ->
     nl_simple_response(Seq, Next).
 
 wait_for_response(Socket, Protocol, Seq, Cb) ->
+    lager:debug("wait_for_response: Seq=~p", [Seq]),
     ok = gen_socket:input_event(Socket, true),
     receive
 	{Socket, input_ready} ->
+        lager:debug("wait_for_response: input_ready"),
 	    Response = process_answer(Socket, Protocol, Cb, []),
+        lager:debug("wait_for_response: Response: ~p~n", [Response]),
 	    case nl_simple_response(Seq, Response) of
 		continue ->
 		    wait_for_response(Socket, Protocol, Seq, Cb);
@@ -391,9 +396,11 @@ wait_for_response(Socket, Protocol, Seq, Cb) ->
 	    end;
 
 	#rtnetlink{type = Type, seq = Seq, msg = Msg} = Response ->
+        lager:debug("wait_for_response: Rx rtnetlink resp ~p", [Response]),
 	    nl_simple_response(Type, Msg, Response);
 
 	#netlink{type = Type, seq = Seq, msg = Msg} = Response ->
+        lager:debug("wait_for_response: Rx netlink resp ~p", [Response]),
 	    nl_simple_response(Type, Msg, Response)
     after
 	1000 ->
@@ -414,6 +421,7 @@ do_request(Socket, Protocol, Req) ->
 process_answer(Socket, Protocol, Cb, CbState0) ->
     case gen_socket:recv(Socket, 16 * 1024 * 1024) of
         {ok, Data} ->
+            lager:debug("process_answer: Decoding received message ~p", [Data]),
             Msg = netlink:nl_dec(Protocol, Data),
             case process_nl(false, Msg, Cb, CbState0) of
                 {continue, CbState1} ->
