@@ -50,7 +50,11 @@ init([Device, FD0, FD1u, Opts]) ->
     {ok, FDesc} = get_ns_fdesc(VrfOpts),
     NsFd = get_ns_fd(FDesc),
     {RtNl, RtNlNs} = netlink_sockets(VrfOpts),
-    CreateGTPLinkInfo = [{fd0, FD0}, {fd1, FD1u}, {hashsize, 131072}],
+    Role = proplists:get_value(role, Opts, ggsn),
+    CreateGTPLinkInfo = [{fd0, FD0}, {fd1, FD1u},
+                         {hashsize, 131072},
+                         {role, gtp_role_atom_to_uint32(Role)}],
+    lager:debug("CreateGTPLinkInfo: ~p", [CreateGTPLinkInfo]),
     CreateGTPData = netlink:linkinfo_enc(inet, "gtp", CreateGTPLinkInfo),
     CreateGTPMsg = {inet,arphrd_none, 0, [up], [up],
 		    [{net_ns_fd, NsFd},
@@ -403,3 +407,7 @@ process_nl(_Multi, [Head|Rest], Cb, CbState0) ->
 
 nl(Msg, Acc) ->
     [Msg|Acc].
+
+
+gtp_role_atom_to_uint32(ggsn) -> 0;
+gtp_role_atom_to_uint32(sgsn) -> 1.

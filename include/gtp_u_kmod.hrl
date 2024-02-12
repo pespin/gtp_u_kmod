@@ -9,3 +9,6 @@
 -define(GTP1c_PORT,	2123).
 -define(GTP1u_PORT,	2152).
 -define(GTP2c_PORT,	2123).
+
+-define(GTP_ROLE_GGSN,	0).
+-define(GTP_ROLE_SGSN,	1).
