@@ -50,25 +50,7 @@ init([Device, FD0, FD1u, Opts]) ->
     {ok, FDesc} = get_ns_fdesc(VrfOpts),
     NsFd = get_ns_fd(FDesc),
     {RtNl, RtNlNs} = netlink_sockets(VrfOpts),
-    Role = proplists:get_value(role, Opts, ggsn),
-    CreateGTPLinkInfo = [{fd0, FD0}, {fd1, FD1u},
-                         {hashsize, 131072},
-                         {role, gtp_role_atom_to_uint32(Role)}],
-    lager:debug("CreateGTPLinkInfo: ~p", [CreateGTPLinkInfo]),
-    CreateGTPData = netlink:linkinfo_enc(inet, "gtp", CreateGTPLinkInfo),
-    CreateGTPMsg = {inet,arphrd_none, 0, [up], [up],
-		    [{net_ns_fd, NsFd},
-		     {ifname,    Device},
-		     {linkinfo,[{kind, "gtp"},
-				{data, CreateGTPData}]}]},
-    CreateGTPReq = #rtnetlink{type  = newlink,
-			      flags = [create,excl,ack,request],
-			      seq   = erlang:unique_integer([positive]),
-			      pid   = 0,
-			      msg   = CreateGTPMsg},
-    lager:debug("CreateGTPReq: ~p", [CreateGTPReq]),
-
-    ok = nl_simple_request(RtNl, ?NETLINK_ROUTE, CreateGTPReq),
+    ok = create_gtp_tun(Device, NsFd, FD0, FD1u, RtNl, Opts),
     GtpIfIdx = configure_vrf(RtNlNs, Device, VrfOpts),
 
     {ok, GtpGenlFam} = get_family("gtp"),
@@ -169,6 +151,26 @@ code_change(_OldVsn, State, _Extra) ->
 
 -define(SELF_NET_NS, "/proc/self/ns/net").
 -define(SIOCGIFINDEX, 16#8933).
+
+create_gtp_tun(Device, NsFd, FD0, FD1u, RtNl, Opts) ->
+    Role = proplists:get_value(role, Opts, ggsn),
+    CreateGTPLinkInfo = [{fd0, FD0}, {fd1, FD1u},
+                         {hashsize, 131072},
+                         {role, gtp_role_atom_to_uint32(Role)}],
+    lager:debug("CreateGTPLinkInfo: ~p", [CreateGTPLinkInfo]),
+    CreateGTPData = netlink:linkinfo_enc(inet, "gtp", CreateGTPLinkInfo),
+    CreateGTPMsg = {inet,arphrd_none, 0, [up], [up],
+                    [{net_ns_fd, NsFd},
+                     {ifname,    Device},
+                     {linkinfo,[{kind, "gtp"},
+                     {data, CreateGTPData}]}]},
+    CreateGTPReq = #rtnetlink{type  = newlink,
+                              flags = [create,excl,ack,request],
+                              seq   = erlang:unique_integer([positive]),
+                              pid   = 0,
+                              msg   = CreateGTPMsg},
+    lager:debug("CreateGTPReq: ~p", [CreateGTPReq]),
+    ok = nl_simple_request(RtNl, ?NETLINK_ROUTE, CreateGTPReq).
 
 get_ns_fdesc(Opts) ->
     try
