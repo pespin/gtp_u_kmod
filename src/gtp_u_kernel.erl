@@ -46,17 +46,27 @@ delete_pdp_context(Server, Version, SGSN, MS, LocalTEI, RemoteTEI) ->
 %%%===================================================================
 
 init([Device, FD0, FD1u, Opts]) ->
+    CreateMode = proplists:get_value(create_mode, Opts, create),
     VrfOpts = proplists:get_value(vrf, Opts, []),
     {ok, FDesc} = get_ns_fdesc(VrfOpts),
     NsFd = get_ns_fd(FDesc),
     {RtNl, RtNlNs} = netlink_sockets(VrfOpts),
-    ok = create_gtp_tun(Device, NsFd, FD0, FD1u, RtNl, Opts),
-    GtpIfIdx = configure_vrf(RtNlNs, Device, VrfOpts),
+    case CreateMode of
+    nocreate -> %% Obtain GtpIfIdx
+        GtpIfIdx = get_interface_index(RtNl, Device),
+        case GtpIfIdx of
+            {error, -19} -> lager:error("~p: {create_mode, nocreate}: device doesn't exist!", [Device]);
+            _ -> ok
+        end;
+    _ -> ok = create_gtp_tun(Device, CreateMode, NsFd, FD0, FD1u, RtNl, Opts),
+        {ok, GtpIfIdx} = wait_for_interface(RtNlNs, Device)
+    end,
+    configure_vrf(RtNlNs, GtpIfIdx, VrfOpts),
+    lager:debug("Device configured: ~p has Idx ~p~n", [Device, GtpIfIdx]),
 
     {ok, GtpGenlFam} = get_family("gtp"),
     {ok, GtpNl} = gen_socket:socket(netlink, raw, ?NETLINK_GENERIC),
     ok = gen_socket:bind(GtpNl, netlink:sockaddr_nl(netlink, 0, 0)),
-
     {ok, #state{ns = NsFd, gtp_nl = GtpNl, rt_nl = RtNl, rt_nl_ns = RtNlNs, gtp_genl_family = GtpGenlFam, gtp_ifidx = GtpIfIdx}}.
 
 handle_call({create_pdp_context, Version, SGSN, MS, LocalTID, RemoteTID},
@@ -152,7 +162,12 @@ code_change(_OldVsn, State, _Extra) ->
 -define(SELF_NET_NS, "/proc/self/ns/net").
 -define(SIOCGIFINDEX, 16#8933).
 
-create_gtp_tun(Device, NsFd, FD0, FD1u, RtNl, Opts) ->
+%% NLM_F_EXCL: Don't replace if the object already exists
+create_mode_to_nl_flag(create) -> excl;
+%% NLM_F_REPLACE: Replace existing matching object.
+create_mode_to_nl_flag(replace) -> replace.
+
+create_gtp_tun(Device, CreateMode, NsFd, FD0, FD1u, RtNl, Opts) ->
     Role = proplists:get_value(role, Opts, ggsn),
     CreateGTPLinkInfo = [{fd0, FD0}, {fd1, FD1u},
                          {hashsize, 131072},
@@ -164,8 +179,9 @@ create_gtp_tun(Device, NsFd, FD0, FD1u, RtNl, Opts) ->
                      {ifname,    Device},
                      {linkinfo,[{kind, "gtp"},
                      {data, CreateGTPData}]}]},
+    ReplaceExclFlag = create_mode_to_nl_flag(CreateMode),
     CreateGTPReq = #rtnetlink{type  = newlink,
-                              flags = [create,excl,ack,request],
+                              flags = [create,ReplaceExclFlag,ack,request],
                               seq   = erlang:unique_integer([positive]),
                               pid   = 0,
                               msg   = CreateGTPMsg},
@@ -262,6 +278,22 @@ wait_for_interface(Socket, Device) ->
 	    {error, timeout}
     end.
 
+get_interface_index(Socket, Device) ->
+    Seq = erlang:unique_integer([positive]),
+    Msg = {unspec, arphrd_netrom, 0, [], [], [{ifname, Device}]},
+    Req = #rtnetlink{type  = getlink,
+		     flags = [request],
+		     seq   = Seq,
+		     pid   = 0,
+		     msg   = Msg},
+    case nl_simple_request(Socket, ?NETLINK_ROUTE, Req) of
+	#rtnetlink{type  = newlink, msg = {_, _, IfIdx, _, _, _}} ->
+	    IfIdx;
+	Ret ->
+	    lager:error("getlink ~p unexpected result: ~p", [Device, Ret]),
+	    Ret
+    end.
+
 get_interface_rt_table(Socket, VRF) when is_list(VRF) ->
     Seq = erlang:unique_integer([positive]),
     Msg = {unspec, arphrd_netrom, 0, [], [], [{ifname, VRF}]},
@@ -317,9 +349,7 @@ add_route(Socket, IfIdx, Table, {{_,_,_,_} = IP, Len}) ->
 	    Other
     end.
 
-configure_vrf(RtNlNs, Device, VrfOpts) ->
-    {ok, GtpIfIdx} = wait_for_interface(RtNlNs, Device),
-
+configure_vrf(RtNlNs, GtpIfIdx, VrfOpts) ->
     Routes = proplists:get_value(routes, VrfOpts, []),
     VRF = proplists:get_value(netdev, VrfOpts),
 

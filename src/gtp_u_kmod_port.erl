@@ -71,22 +71,29 @@ bind(Name) ->
 %%%===================================================================
 
 init([Name, SocketOpts]) ->
-    %% TODO: better config validation and handling
-    IP    = proplists:get_value(ip, SocketOpts),
-    NetNs = proplists:get_value(netns, SocketOpts),
-
-    {ok, GTP0} = make_gtp_socket(NetNs, IP, ?GTP0_PORT, SocketOpts),
-    {ok, GTP1u} = make_gtp_socket(NetNs, IP, ?GTP1u_PORT, SocketOpts),
-
-    FD0 = gen_socket:getfd(GTP0),
-    FD1u = gen_socket:getfd(GTP1u),
-    {ok, GTPDev} = gtp_u_kernel:dev_create("gtp0", FD0, FD1u, SocketOpts),
-
-    State = #state{name = Name,
-		   ip = IP,
-		   gtp0 = GTP0,
-		   gtp1u = GTP1u,
-		   gtp_dev = GTPDev},
+    IfName = "gtp0", %% TODO: make this configurable.
+    case proplists:get_value(create_mode, SocketOpts, create) of
+    nocreate ->
+        lager:notice("~p: {create_mode, nocreate}: Assuming gtp tundev ~p was already created",
+                        [port_reg_name(Name), Name]),
+        {ok, GTPDev} = gtp_u_kernel:dev_create(IfName, undefined, undefined, SocketOpts),
+        State = #state{name = Name,
+                       gtp_dev = GTPDev};
+    _ -> %% create|replace:
+        %% TODO: better config validation and handling
+        IP    = proplists:get_value(ip, SocketOpts),
+        NetNs = proplists:get_value(netns, SocketOpts),
+        {ok, GTP0} = make_gtp_socket(NetNs, IP, ?GTP0_PORT, SocketOpts),
+        {ok, GTP1u} = make_gtp_socket(NetNs, IP, ?GTP1u_PORT, SocketOpts),
+        FD0 = gen_socket:getfd(GTP0),
+        FD1u = gen_socket:getfd(GTP1u),
+        {ok, GTPDev} = gtp_u_kernel:dev_create(IfName, FD0, FD1u, SocketOpts),
+        State = #state{name = Name,
+                       ip = IP,
+                       gtp0 = GTP0,
+                       gtp1u = GTP1u,
+                       gtp_dev = GTPDev}
+    end,
     {ok, State}.
 
 handle_call(bind, _From, #state{ip = IP} = State) ->
