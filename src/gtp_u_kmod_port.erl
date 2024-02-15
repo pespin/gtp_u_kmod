@@ -71,7 +71,7 @@ bind(Name) ->
 %%%===================================================================
 
 init([Name, SocketOpts]) ->
-    IfName = "gtp0", %% TODO: make this configurable.
+    IfName = atom_to_list(Name),
     case proplists:get_value(create_mode, SocketOpts, create) of
     nocreate ->
         lager:notice("~p: {create_mode, nocreate}: Assuming gtp tundev ~p was already created",
